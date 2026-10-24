@@ -19,9 +19,11 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 API = "https://graph.instagram.com/v26.0"
+MIN_GAP_HOURS = 20   # scheduled runs post at most this often, so the backup cron times never double-post
 ROOT = Path(__file__).resolve().parent
 POSTS = ROOT / "posts"
 LOG = ROOT / "posted.json"
@@ -77,6 +79,12 @@ def image_urls(d: Path) -> list[str]:
     return [f"https://raw.githubusercontent.com/{repo}/{ref}/posts/{d.name}/{p.name}" for p in sorted(d.glob("*.jpg"))]
 
 
+def hours_since_last_post(log: list[dict]) -> float | None:
+    times = [datetime.strptime(e["posted_at"].replace("Z", "+0000"), "%Y-%m-%dT%H:%M:%S%z")
+             for e in log if e.get("posted_at")]
+    return (datetime.now(timezone.utc) - max(times)).total_seconds() / 3600 if times else None
+
+
 def wait_finished(container: str, timeout: int = 300) -> None:
     deadline = time.time() + timeout
     while True:
@@ -119,6 +127,12 @@ def main() -> int:
     if not pending:
         print("::warning::no approved episodes left to post; approve more with `python run.py approve` on the PC")
         output(remaining=0)
+        return 0
+
+    gap = hours_since_last_post(log)
+    if os.environ.get("GITHUB_EVENT_NAME") == "schedule" and gap is not None and gap < MIN_GAP_HOURS:
+        print(f"last post was {gap:.1f} h ago; one post a day, so skipping this run")
+        output(remaining=len(pending))
         return 0
 
     d = pending[0]

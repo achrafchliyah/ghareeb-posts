@@ -1,8 +1,12 @@
 name: Post to Instagram
 
 on:
+  # 19:07 Morocco time (UTC+0, as Windows shows it; GitHub cron is always UTC). GitHub delays or drops
+  # scheduled runs when busy, so two backups follow; publish.py posts at most once per 20 hours on these.
   schedule:
-    - cron: "0 18 * * *"   # every day at 18:00 UTC = 19:00 in Morocco (UTC+1)
+    - cron: "7 19 * * *"
+    - cron: "37 19 * * *"
+    - cron: "7 20 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
