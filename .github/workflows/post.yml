@@ -1,0 +1,58 @@
+name: Post to Instagram
+
+on:
+  schedule:
+    - cron: "0 18 * * *"   # every day at 18:00 UTC = 19:00 in Morocco (UTC+1)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only check token, images and caption (don't post)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write   # commit posted.json
+  issues: write     # open an issue when the approved queue runs low
+
+concurrency:
+  group: post
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: publish
+        run: python3 publish.py ${{ inputs.dry_run && '--dry-run' || '' }}
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+
+      - name: Save posted.json
+        if: ${{ always() && !inputs.dry_run }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add posted.json
+          if ! git diff --cached --quiet; then
+            git commit -m "posted episode ${{ steps.publish.outputs.episode }}"
+            git pull --rebase
+            git push
+          fi
+
+      - name: Ask for more approvals when the queue runs low
+        if: ${{ steps.publish.outputs.remaining != '' && fromJSON(steps.publish.outputs.remaining) < 3 }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REMAINING: ${{ steps.publish.outputs.remaining }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          gh label create queue-low --color D93F0B --force >/dev/null
+          if [ -z "$(gh issue list --state open --label queue-low --json number --jq '.[].number')" ]; then
+            gh issue create --label queue-low \
+              --title "Only $REMAINING approved post(s) left" \
+              --body "@$OWNER the daily Instagram job has $REMAINING approved episode(s) left. On the PC: open output/review.html, then \`python run.py approve --from N --to M\`. This issue closes itself after the next approve."
+          fi
